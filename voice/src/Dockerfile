@@ -1,0 +1,115 @@
+FROM dustynv/jetson-voice:r32.7.1
+
+# ===========================================================================================
+# install packages
+RUN apt-get update && apt-get install -q -y --no-install-recommends \
+    dirmngr \
+    gnupg2 \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# setup sources.list
+RUN echo "deb http://packages.ros.org/ros/ubuntu bionic main" > /etc/apt/sources.list.d/ros1-latest.list
+
+# setup keys
+RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+
+# setup environment
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8
+
+ENV ROS_DISTRO melodic
+
+# install ros packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-melodic-ros-core=1.4.1-0* \
+    && rm -rf /var/lib/apt/lists/*
+
+# ===========================================================================================
+RUN apt update
+RUN apt install -y curl 
+RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
+RUN apt update
+RUN apt install -y ros-melodic-ros-base
+# ===========================================================================================
+
+RUN python3 -m pip install --upgrade pip \
+     && python3 -m pip install rospkg
+
+RUN python3 -m pip install pyctcdecode
+RUN python3 -m pip install https://github.com/kpu/kenlm/archive/master.zip
+# ===========================================================================================
+# setup entrypoint
+COPY ./ros_entrypoint.sh /
+
+ENV ROS_DISTRO=melodic
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]
+
+RUN echo "source /opt/ros/melodic/setup.bash" >> /root/.bashrc 
+
+
+ENV TZ=America/Sao_Paulo
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+RUN apt update
+RUN apt install -y tzdata
+
+RUN apt-get install --no-install-recommends -y ffmpeg bash curl git && \
+    rm -rf /var/lib/{apt,dpkg,cache,log}
+
+RUN pip install PyYAML==6.0 --ignore-installed 
+COPY requirements.txt .
+
+ENV TRANSFORMERS_CACHE="/app/.cache/huggingface"
+RUN pip install --no-cache-dir -r requirements.txt && \
+  pip install git+https://github.com/pytorch/fairseq@05255f96410e5b1eaf3bf59b767d5b4b7e2c3a35 
+
+ENV model=jonatasgrosman/wav2vec2-xls-r-1b-english
+RUN python -c "from os import getenv; from transformers import AutoTokenizer, AutoFeatureExtractor, Wav2Vec2ForCTC; AutoFeatureExtractor.from_pretrained(getenv('model')); tokenizer = AutoTokenizer.from_pretrained(getenv('model')); model = Wav2Vec2ForCTC.from_pretrained(getenv('model'))"
+
+RUN pip install numpy --upgrade
+RUN pip install pyloudnorm ffmpeg-python
+
+RUN apt install ffmpeg -y && git clone https://github.com/openai/whisper && cd whisper && pip install . --no-deps
+RUN python -c "import whisper; whisper.load_model('base'); whisper.load_model('small'); whisper.load_model('tiny')"
+# ===========================================================================================
+# chatbot
+
+RUN python3 -m pip install spacy==3.4.1
+RUN python3 -m spacy download en_core_web_sm
+################################################################
+## project install
+################################################################
+
+# various late additions
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+		iproute2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+ARG WORKSPACE=/zordon-2022-interaction
+ENV PYTHONPATH="${WORKSPACE}:${PYTHONPATH}"
+
+#cd /home/athome/zordon-2022/zordon-2022-interaction/jetson-voice-dev && python examples/asr_w2v.py --vad-model data/networks/asr/vad_marblenet/vad_marblenet.json --output-device 24 --mic 24
+
+RUN sudo rm -rf /jetson-voice/*
+COPY . /jetson-voice/
+COPY jetson_voice ${WORKSPACE}/jetson-voice/
+
+RUN mkdir -p /interacao_voice_ws
+WORKDIR /interacao_voice_ws
+COPY . ./interacao_voice_ws/src
+RUN /bin/bash -c '. /opt/ros/melodic/setup.bash; catkin_make'
+
+RUN echo "source /opt/ros/melodic/setup.bash" >> /root/.bashrc && \
+    echo "source /interacao_voice_ws/devel/setup.bash" >> /root/.bashrc 
+
+# chatbot
+
+# RUN python3 -m pip install spacy==3.4.1
+# RUN python3 -m spacy download en_core_web_sm
+# # ===========================================================================================
+# RUN pip install netifaces num2words pyloudnorm

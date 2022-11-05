@@ -1,0 +1,10 @@
+<launch>
+    <include file="$(find wake_word)/launch/wake_word.launch">
+    </include>
+    <include file="$(find voice)/launch/voice.launch">
+    </include>
+    <!-- <include file="$(find zordon_nlu)/launch/rasa_nlu.launch">
+    </include> -->
+    <node name="chatbot" pkg="chatbot" type="chatbot.py" output="screen" >
+    </node>
+</launch>
